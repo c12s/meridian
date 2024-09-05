@@ -19,6 +19,7 @@ type SeccompProfile struct {
 	Name         string
 	Version      string
 	Architecture string
+	NsOrgId      string
 }
 
 func MakeNamespaceId(orgId, namespaceName string) string {
@@ -119,6 +120,7 @@ func (n Namespace) GetSeccompProfile() SeccompProfile {
 		Name:         fmt.Sprintf("%s profile", n.GetId()),
 		Version:      n.profileVersion,
 		Architecture: SECCOMP_DEFAULT_ARCH,
+		NsOrgId:      n.GetOrgId(),
 	}
 }
 

@@ -7,6 +7,7 @@ require (
 	github.com/c12s/magnetar v1.0.0
 	github.com/c12s/oort v1.0.0
 	github.com/c12s/pulsar v1.0.0
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/nats-io/nats.go v1.31.0
 	github.com/neo4j/neo4j-go-driver/v4 v4.4.7
 	google.golang.org/grpc v1.65.0

@@ -13,9 +13,11 @@ import (
 	gravityapi "github.com/c12s/gravity/pkg/api"
 	magnetarapi "github.com/c12s/magnetar/pkg/api"
 	"github.com/c12s/meridian/internal/domain"
+	"github.com/c12s/meridian/internal/services"
 	"github.com/c12s/meridian/pkg/api"
 	oortapi "github.com/c12s/oort/pkg/api"
 	pulsar_api "github.com/c12s/pulsar/model/protobuf"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -31,9 +33,10 @@ type MeridianGrpcHandler struct {
 	administrator *oortapi.AdministrationAsyncClient
 	gravity       gravityapi.AgentQueueClient
 	magnetar      magnetarapi.MagnetarClient
+	authorizer    services.AuthZService
 }
 
-func NewMeridianGrpcHandler(namespaces domain.NamespaceStore, apps domain.AppStore, pulsar pulsar_api.SeccompServiceClient, resources domain.ResourceQuotaStore, administrator *oortapi.AdministrationAsyncClient, gravity gravityapi.AgentQueueClient, magnetar magnetarapi.MagnetarClient) api.MeridianServer {
+func NewMeridianGrpcHandler(namespaces domain.NamespaceStore, apps domain.AppStore, pulsar pulsar_api.SeccompServiceClient, resources domain.ResourceQuotaStore, administrator *oortapi.AdministrationAsyncClient, gravity gravityapi.AgentQueueClient, magnetar magnetarapi.MagnetarClient, authorizer services.AuthZService) api.MeridianServer {
 	return MeridianGrpcHandler{
 		namespaces:    namespaces,
 		apps:          apps,
@@ -42,10 +45,17 @@ func NewMeridianGrpcHandler(namespaces domain.NamespaceStore, apps domain.AppSto
 		administrator: administrator,
 		gravity:       gravity,
 		magnetar:      magnetar,
+		authorizer:    authorizer,
 	}
 }
 
 func (m MeridianGrpcHandler) AddNamespace(ctx context.Context, req *api.AddNamespaceReq) (*api.AddNamespaceResp, error) {
+	err := m.authorizer.Authorize(ctx, "org.namespace.add", "org", req.OrgId)
+	if err != nil {
+		log.Printf("AddNamespace authz failed meridian org.namespace.add|org|%s", req.OrgId)
+		return nil, status.Errorf(codes.PermissionDenied, err.Error())
+	}
+
 	namespace, err := m.namespaces.Get(domain.MakeNamespaceId(req.OrgId, req.Name))
 	if err == nil {
 		err = status.Error(codes.AlreadyExists, "namespace already exists")
@@ -111,7 +121,12 @@ func (m MeridianGrpcHandler) AddNamespace(ctx context.Context, req *api.AddNames
 }
 
 func (m MeridianGrpcHandler) RemoveNamespace(ctx context.Context, req *api.RemoveNamespaceReq) (*api.RemoveNamespaceResp, error) {
-	tree, err := m.namespaces.GetHierarchy(domain.MakeNamespaceId(req.OrgId, req.Name))
+	nsId := domain.MakeNamespaceId(req.OrgId, req.Name)
+	err := m.authorizer.Authorize(ctx, "namespace.delete", "namespace", nsId)
+	if err != nil {
+		return nil, status.Errorf(codes.PermissionDenied, err.Error())
+	}
+	tree, err := m.namespaces.GetHierarchy(nsId)
 	if err == nil && (len(tree.Root.Children) > 0 || len(tree.Root.Apps) > 0) {
 		err = status.Error(codes.InvalidArgument, "namespace must not have applications or child namespaces")
 		return nil, err
@@ -125,8 +140,20 @@ func (m MeridianGrpcHandler) RemoveNamespace(ctx context.Context, req *api.Remov
 	return &api.RemoveNamespaceResp{}, nil
 }
 
+// ns.get|namespace|nsId ce proveriti da li je user iz te org i da li ns pripada toj org na osnovu id
 func (m MeridianGrpcHandler) AddApp(ctx context.Context, req *api.AddAppReq) (*api.AddAppResp, error) {
-	namespace, err := m.namespaces.Get(domain.MakeNamespaceId(req.OrgId, req.Namespace))
+	nsId := domain.MakeNamespaceId(req.OrgId, req.Namespace)
+	err := m.authorizer.Authorize(ctx, "org.namespace.get", "namespace", nsId)
+	if err != nil {
+		return nil, status.Errorf(codes.PermissionDenied, "the namespace is not associated with the organization")
+	}
+
+	err = m.authorizer.Authorize(ctx, "namespace.app.add", "namespace", nsId)
+	if err != nil {
+		return nil, status.Errorf(codes.PermissionDenied, err.Error())
+	}
+
+	namespace, err := m.namespaces.Get(nsId)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.NotFound, "namespace not found")
@@ -154,7 +181,7 @@ func (m MeridianGrpcHandler) AddApp(ctx context.Context, req *api.AddAppReq) (*a
 		err = status.Error(codes.Internal, err.Error())
 		return nil, err
 	}
-	nodes, err := m.placeByGossip(context.Background(), req.OrgId, 50)
+	nodes, err := m.placeByGossip(ctx, req.OrgId, 50)
 	if err != nil {
 		return nil, err
 	}
@@ -173,8 +200,9 @@ func (m MeridianGrpcHandler) AddApp(ctx context.Context, req *api.AddAppReq) (*a
 	if err != nil {
 		return nil, err
 	}
+	ctx = setOutgoingContext(ctx)
 	for _, node := range nodes {
-		_, err = m.gravity.DisseminateAppConfig(context.Background(), &gravityapi.DeseminateConfigRequest{
+		_, err = m.gravity.DisseminateAppConfig(ctx, &gravityapi.DeseminateConfigRequest{
 			NodeId: node.Id,
 			Config: cmdMarshalled,
 		})
@@ -184,11 +212,39 @@ func (m MeridianGrpcHandler) AddApp(ctx context.Context, req *api.AddAppReq) (*a
 			return nil, err
 		}
 	}
+
+	err2 := m.administrator.SendRequest(&oortapi.CreateInheritanceRelReq{
+		From: &oortapi.Resource{
+			Id:   nsId,
+			Kind: "namespace",
+		},
+		To: &oortapi.Resource{
+			Id:   app.GetId(),
+			Kind: "app",
+		},
+	}, func(resp *oortapi.AdministrationAsyncResp) {
+		log.Println(resp.Error)
+	})
+	if err2 != nil {
+		log.Println(err2)
+	}
 	return &api.AddAppResp{}, nil
 }
 
 func (m MeridianGrpcHandler) RemoveApp(ctx context.Context, req *api.RemoveAppReq) (*api.RemoveAppResp, error) {
-	err := m.apps.Remove(domain.MakeAppId(req.OrgId, req.Namespace, req.Name))
+	nsId := domain.MakeNamespaceId(req.OrgId, req.Namespace)
+	err := m.authorizer.Authorize(ctx, "org.namespace.get", "namespace", nsId)
+	if err != nil {
+		return nil, status.Errorf(codes.PermissionDenied, "the namespace is not associated with the organization")
+	}
+
+	appId := domain.MakeAppId(req.OrgId, req.Namespace, req.Name)
+	err = m.authorizer.Authorize(ctx, "app.delete", "app", appId)
+	if err != nil {
+		return nil, status.Errorf(codes.PermissionDenied, err.Error())
+	}
+
+	err = m.apps.Remove(appId)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())
@@ -198,12 +254,20 @@ func (m MeridianGrpcHandler) RemoveApp(ctx context.Context, req *api.RemoveAppRe
 }
 
 func (m MeridianGrpcHandler) GetNamespace(ctx context.Context, req *api.GetNamespaceReq) (*api.GetNamespaceResp, error) {
-	namespace, err := m.namespaces.Get(domain.MakeNamespaceId(req.OrgId, req.Name))
+	nsId := domain.MakeNamespaceId(req.OrgId, req.Name)
+	namespace, err := m.namespaces.Get(nsId)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.NotFound, "namespace not found")
 		return nil, err
 	}
+
+	err = m.authorizer.Authorize(ctx, "org.namespace.get", "namespace", nsId)
+	if err != nil {
+		log.Println(err)
+		return nil, status.Errorf(codes.PermissionDenied, "the namespace is not associated with user organization")
+	}
+
 	return &api.GetNamespaceResp{
 		Name:      namespace.GetName(),
 		Labels:    namespace.GetLabels(),
@@ -215,7 +279,13 @@ func (m MeridianGrpcHandler) GetNamespace(ctx context.Context, req *api.GetNames
 }
 
 func (m MeridianGrpcHandler) GetNamespaceHierarchy(ctx context.Context, req *api.GetNamespaceHierarchyReq) (*api.GetNamespaceHierarchyResp, error) {
-	tree, err := m.namespaces.GetHierarchy(domain.MakeNamespaceId(req.OrgId, "default"))
+	nsId := domain.MakeNamespaceId(req.OrgId, "default")
+	err := m.authorizer.Authorize(ctx, "org.namespace.get", "namespace", nsId)
+	if err != nil {
+		return nil, status.Errorf(codes.PermissionDenied, "the namespace is not associated with user organization")
+	}
+
+	tree, err := m.namespaces.GetHierarchy(nsId)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.NotFound, "namespace hierarchy not found")
@@ -225,7 +295,14 @@ func (m MeridianGrpcHandler) GetNamespaceHierarchy(ctx context.Context, req *api
 }
 
 func (m MeridianGrpcHandler) SetNamespaceResources(ctx context.Context, req *api.SetNamespaceResourcesReq) (*api.SetNamespaceResourcesResp, error) {
-	err := m.resources.SetResourceQuotas(domain.MakeNamespaceId(req.OrgId, req.Name), domain.ResourceQuotas(req.Quotas), nil)
+	nsId := domain.MakeNamespaceId(req.OrgId, req.Name)
+	err := m.authorizer.Authorize(ctx, "namespace.put", "namespace", nsId)
+	if err != nil {
+		log.Println(err)
+		return nil, status.Errorf(codes.PermissionDenied, err.Error())
+	}
+
+	err = m.resources.SetResourceQuotas(nsId, domain.ResourceQuotas(req.Quotas), nil)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())
@@ -235,7 +312,22 @@ func (m MeridianGrpcHandler) SetNamespaceResources(ctx context.Context, req *api
 }
 
 func (m MeridianGrpcHandler) SetAppResources(ctx context.Context, req *api.SetAppResourcesReq) (*api.SetAppResourcesResp, error) {
-	err := m.resources.SetResourceQuotas(domain.MakeAppId(req.OrgId, req.Namespace, req.Name), domain.ResourceQuotas(req.Quotas), nil)
+	nsId := domain.MakeNamespaceId(req.OrgId, req.Namespace)
+	// proverava da li ns pripada org u kojoj je i user
+	err := m.authorizer.Authorize(ctx, "org.namespace.get", "namespace", nsId)
+	if err != nil {
+		log.Println("SetAppResources org.namespace.get failed ")
+		return nil, status.Errorf(codes.PermissionDenied, err.Error())
+	}
+
+	appId := domain.MakeAppId(req.OrgId, req.Namespace, req.Name)
+	err = m.authorizer.Authorize(ctx, "app.put", "app", appId) // prava za konkretnu app u ns
+	if err != nil {
+		log.Println("SetAppResources app.put failed ")
+		return nil, status.Errorf(codes.PermissionDenied, err.Error())
+	}
+
+	err = m.resources.SetResourceQuotas(appId, domain.ResourceQuotas(req.Quotas), nil)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())
@@ -269,6 +361,7 @@ func (m *MeridianGrpcHandler) mapNamespaceTreeNode(ctx context.Context, node *do
 }
 
 func (m *MeridianGrpcHandler) sendSeccompProfile(ctx context.Context, strategy string, metadata domain.SeccompProfile, profileDefinition *api.SeccompProfile, parent *domain.Namespace) error {
+	ctx = setOutgoingContext(ctx)
 	switch strings.ToLower(strategy) {
 	case "redefine":
 		profile := &pulsar_api.SeccompProfileDefinitionRequest{
@@ -357,6 +450,7 @@ func (m *MeridianGrpcHandler) sendSeccompProfile(ctx context.Context, strategy s
 }
 
 func (m *MeridianGrpcHandler) getSeccompProfile(ctx context.Context, metadata domain.SeccompProfile) *api.SeccompProfile {
+	ctx = setOutgoingContext(ctx)
 	resp, err := m.pulsar.GetSeccompProfile(ctx, &pulsar_api.SeccompProfile{
 		Namespace:    metadata.Namespace,
 		Application:  metadata.Application,
@@ -385,12 +479,7 @@ func (m *MeridianGrpcHandler) placeByGossip(ctx context.Context, org string, per
 	queryReq := &magnetarapi.ListOrgOwnedNodesReq{
 		Org: string(org),
 	}
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		log.Println("no metadata in ctx when sending req to magnetar")
-	} else {
-		ctx = metadata.NewOutgoingContext(ctx, md)
-	}
+	ctx = setOutgoingContext(ctx)
 	queryResp, err := m.magnetar.ListOrgOwnedNodes(ctx, queryReq)
 	if err != nil {
 		return nil, err
@@ -417,4 +506,24 @@ func selectRandmNodes(nodes []*magnetarapi.NodeStringified, percentage int32) []
 	}
 
 	return selectedNodes
+}
+
+func setOutgoingContext(ctx context.Context) context.Context {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		log.Println("[WARN] no metadata in ctx when sending req")
+		return ctx
+	}
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
+func GetAuthInterceptor() func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		md, ok := metadata.FromIncomingContext(ctx)
+		if ok && len(md.Get("authz-token")) > 0 {
+			ctx = context.WithValue(ctx, "authz-token", md.Get("authz-token")[0])
+		}
+		// Calls the handler
+		return handler(ctx, req)
+	}
 }
