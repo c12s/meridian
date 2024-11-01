@@ -11,6 +11,7 @@ import (
 	gravityapi "github.com/c12s/gravity/pkg/api"
 	magnetarapi "github.com/c12s/magnetar/pkg/api"
 	"github.com/c12s/meridian/internal/handlers"
+	"github.com/c12s/meridian/internal/services"
 	"github.com/c12s/meridian/internal/store"
 	"github.com/c12s/meridian/pkg/api"
 	oortapi "github.com/c12s/oort/pkg/api"
@@ -54,9 +55,11 @@ func main() {
 	}
 	defer conn.Close()
 	magnetar := magnetarapi.NewMagnetarClient(connMagnetar)
-	meridian := handlers.NewMeridianGrpcHandler(namespaces, apps, pulsar, quotas, administrator, gravity, magnetar)
+	authorizer := services.NewAuthZService(os.Getenv("SECRET_KEY"))
+	meridian := handlers.NewMeridianGrpcHandler(namespaces, apps, pulsar, quotas, administrator, gravity, magnetar, authorizer)
 
-	s := grpc.NewServer()
+	//s := grpc.NewServer()
+	s := grpc.NewServer(grpc.UnaryInterceptor(handlers.GetAuthInterceptor()))
 	api.RegisterMeridianServer(s, meridian)
 	reflection.Register(s)
 

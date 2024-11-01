@@ -59,11 +59,12 @@ func (a *App) AddResourceQuota(resource string, quota float64) error {
 
 func (a App) GetSeccompProfile() SeccompProfile {
 	return SeccompProfile{
-		Namespace:    a.namespace.GetId(),
+		Namespace:    a.GetNamespace().GetId(),
 		Application:  a.GetName(),
 		Name:         fmt.Sprintf("%s profile", a.GetId()),
 		Version:      a.profileVersion,
 		Architecture: SECCOMP_DEFAULT_ARCH,
+		NsOrgId:      a.GetNamespace().GetOrgId(),
 	}
 }
 
