@@ -1,0 +1,86 @@
+name: Go CI
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  go-ci:
+      runs-on: ubuntu-latest
+
+      steps:
+        - name: Check out main repository
+          uses: actions/checkout@v4
+          
+        - name: Check additional repo
+          uses: actions/checkout@v4
+          with:
+            repository: 'c12s/gravity'
+            path: 'gravity'
+
+        - name: Move gravity to parent directory
+          run: mv gravity ../gravity
+
+        - name: Check additional repo
+          uses: actions/checkout@v4
+          with:
+            repository: 'c12s/magnetar'
+            path: 'magnetar'
+
+        - name: Move magnetar to parent directory
+          run: mv magnetar ../magnetar
+
+        - name: Check additional repo
+          uses: actions/checkout@v4
+          with:
+            repository: 'c12s/oort'
+            path: 'oort'
+
+        - name: Move oort to parent directory
+          run: mv oort ../oort
+
+        - name: Check additional repo
+          uses: actions/checkout@v4
+          with:
+            repository: 'c12s/pulsar'
+            path: 'pulsar'
+
+        - name: Move pulsar to parent directory
+          run: mv pulsar ../pulsar
+          
+        - name: Set up Go
+          uses: actions/setup-go@v5
+          with:
+            go-version: '1.22.3'
+
+        - name: Update and tidy Go modules
+          run: go mod tidy
+
+        - name: Install dependencies
+          run: go mod download
+          working-directory: ./ 
+
+        - name: Build
+          run: go build -v ./...
+          working-directory: ./ 
+
+        - name: Set up QEMU
+          uses: docker/setup-qemu-action@v3
+
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@v3
+
+        - name: Login to DockerHub
+          uses: docker/login-action@v3
+          with:
+            username: ${{ secrets.DOCKERHUB_USERNAME }}
+            password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+        - name: Build and Push Docker Image
+          uses: docker/build-push-action@v6
+          with:
+            context: ..
+            file: ../meridian/Dockerfile
+            push: true
+            tags: ${{ secrets.DOCKERHUB_USERNAME }}/meridian:latest
