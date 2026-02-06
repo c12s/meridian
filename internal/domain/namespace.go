@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -151,8 +152,8 @@ type NamespaceTree struct {
 }
 
 type NamespaceStore interface {
-	Add(namespace Namespace, parent *Namespace) error
-	Get(id string) (Namespace, error)
-	GetHierarchy(rootId string) (NamespaceTree, error)
-	Remove(id string) error
+	Add(ctx context.Context, namespace Namespace, parent *Namespace) error
+	Get(ctx context.Context, id string) (Namespace, error)
+	GetHierarchy(ctx context.Context, rootId string) (NamespaceTree, error)
+	Remove(ctx context.Context, id string) error
 }

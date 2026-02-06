@@ -1,11 +1,13 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	"github.com/c12s/meridian/internal/domain"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
+	"go.opentelemetry.io/otel"
 )
 
 type resourceQuotaNeo4jStore struct {
@@ -23,7 +25,11 @@ func NewResourceQuotaNeo4jStore(driver neo4j.Driver, dbName string) domain.Resou
 	}
 }
 
-func (n *resourceQuotaNeo4jStore) SetResourceQuotas(entityId string, quotas domain.ResourceQuotas, tx neo4j.Transaction) error {
+func (n *resourceQuotaNeo4jStore) SetResourceQuotas(ctx context.Context, entityId string, quotas domain.ResourceQuotas, tx neo4j.Transaction) error {
+	tracer := otel.Tracer("meridian.ResourceQuotaNeo4jStore")
+	ctx, span := tracer.Start(ctx, "SetResourceQuotas")
+	defer span.End()
+
 	if tx == nil {
 		session := startSession(n.driver, n.dbName)
 		defer endSession(session)
@@ -34,17 +40,17 @@ func (n *resourceQuotaNeo4jStore) SetResourceQuotas(entityId string, quotas doma
 		tx = newTx
 	}
 
-	total, err := n.getQuotas(tx, entityId)
+	total, err := n.getQuotas(ctx, tx, entityId)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	parentEntityId, err := n.getParentEntity(tx, entityId)
+	parentEntityId, err := n.getParentEntity(ctx, tx, entityId)
 	if err != nil {
 		log.Println(err)
 	} else {
-		availableParent, err := n.GetAvailableResources(tx, parentEntityId)
+		availableParent, err := n.GetAvailableResources(ctx, tx, parentEntityId)
 		if err != nil {
 			tx.Rollback()
 			return err
@@ -56,7 +62,7 @@ func (n *resourceQuotaNeo4jStore) SetResourceQuotas(entityId string, quotas doma
 		}
 	}
 
-	available, err := n.GetAvailableResources(tx, entityId)
+	available, err := n.GetAvailableResources(ctx, tx, entityId)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -77,7 +83,11 @@ func (n *resourceQuotaNeo4jStore) SetResourceQuotas(entityId string, quotas doma
 	return nil
 }
 
-func (n *resourceQuotaNeo4jStore) getQuotas(tx neo4j.Transaction, id string) (domain.ResourceQuotas, error) {
+func (n *resourceQuotaNeo4jStore) getQuotas(ctx context.Context, tx neo4j.Transaction, id string) (domain.ResourceQuotas, error) {
+	tracer := otel.Tracer("meridian.ResourceQuotaNeo4jStore")
+	ctx, span := tracer.Start(ctx, "getQuotas")
+	defer span.End()
+
 	res, err := tx.Run(getEntityCypher, map[string]any{
 		"id": id,
 	})
@@ -87,7 +97,11 @@ func (n *resourceQuotaNeo4jStore) getQuotas(tx neo4j.Transaction, id string) (do
 	return n.readQuotas(res)
 }
 
-func (n *resourceQuotaNeo4jStore) getParentEntity(tx neo4j.Transaction, entityId string) (string, error) {
+func (n *resourceQuotaNeo4jStore) getParentEntity(ctx context.Context, tx neo4j.Transaction, entityId string) (string, error) {
+	tracer := otel.Tracer("meridian.ResourceQuotaNeo4jStore")
+	ctx, span := tracer.Start(ctx, "getParentEntity")
+	defer span.End()
+
 	res, err := tx.Run(getParentEntityCypher, map[string]any{
 		"id": entityId,
 	})
@@ -97,7 +111,11 @@ func (n *resourceQuotaNeo4jStore) getParentEntity(tx neo4j.Transaction, entityId
 	return n.readEntityId(res)
 }
 
-func (n *resourceQuotaNeo4jStore) GetAvailableResources(tx neo4j.Transaction, entityId string) (domain.ResourceQuotas, error) {
+func (n *resourceQuotaNeo4jStore) GetAvailableResources(ctx context.Context, tx neo4j.Transaction, entityId string) (domain.ResourceQuotas, error) {
+	tracer := otel.Tracer("meridian.ResourceQuotaNeo4jStore")
+	ctx, span := tracer.Start(ctx, "GetAvailableResources")
+	defer span.End()
+
 	if tx == nil {
 		session := startSession(n.driver, n.dbName)
 		defer endSession(session)

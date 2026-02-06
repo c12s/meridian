@@ -1,12 +1,14 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 
 	"github.com/c12s/meridian/internal/domain"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
+	"go.opentelemetry.io/otel"
 )
 
 type namespaceNeo4jStore struct {
@@ -28,7 +30,12 @@ func NewNamespaceNeo4jStore(driver neo4j.Driver, dbName string, quotas domain.Re
 	}
 }
 
-func (n *namespaceNeo4jStore) Add(namespace domain.Namespace, parent *domain.Namespace) error {
+func (n *namespaceNeo4jStore) Add(ctx context.Context, namespace domain.Namespace, parent *domain.Namespace) error {
+
+	tracer := otel.Tracer("meridian.NamespaceNeo4jStore")
+	ctx, span := tracer.Start(ctx, "Add")
+	defer span.End()
+
 	session := startSession(n.driver, n.dbName)
 	defer endSession(session)
 	tx, err := session.BeginTransaction()
@@ -59,7 +66,7 @@ func (n *namespaceNeo4jStore) Add(namespace domain.Namespace, parent *domain.Nam
 		}
 	}
 
-	err = n.quotas.SetResourceQuotas(namespace.GetId(), namespace.GetResourceQuotas(), tx)
+	err = n.quotas.SetResourceQuotas(ctx, namespace.GetId(), namespace.GetResourceQuotas(), tx)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -68,7 +75,11 @@ func (n *namespaceNeo4jStore) Add(namespace domain.Namespace, parent *domain.Nam
 	return nil
 }
 
-func (n *namespaceNeo4jStore) Get(id string) (domain.Namespace, error) {
+func (n *namespaceNeo4jStore) Get(ctx context.Context, id string) (domain.Namespace, error) {
+	tracer := otel.Tracer("meridian.NamespaceNeo4jStore")
+	ctx, span := tracer.Start(ctx, "Get")
+	defer span.End()
+
 	session := startSession(n.driver, n.dbName)
 	defer endSession(session)
 	tx, err := session.BeginTransaction()
@@ -76,14 +87,18 @@ func (n *namespaceNeo4jStore) Get(id string) (domain.Namespace, error) {
 		return domain.Namespace{}, err
 	}
 	defer tx.Commit()
-	namespace, err := n.get(tx, id)
+	namespace, err := n.get(ctx, tx, id)
 	if err != nil {
 		return domain.Namespace{}, err
 	}
 	return namespace, nil
 }
 
-func (n *namespaceNeo4jStore) GetHierarchy(rootId string) (domain.NamespaceTree, error) {
+func (n *namespaceNeo4jStore) GetHierarchy(ctx context.Context, rootId string) (domain.NamespaceTree, error) {
+	tracer := otel.Tracer("meridian.NamespaceNeo4jStore")
+	ctx, span := tracer.Start(ctx, "GetHierarchy")
+	defer span.End()
+
 	session := startSession(n.driver, n.dbName)
 	defer endSession(session)
 	tx, err := session.BeginTransaction()
@@ -91,13 +106,13 @@ func (n *namespaceNeo4jStore) GetHierarchy(rootId string) (domain.NamespaceTree,
 		return domain.NamespaceTree{}, err
 	}
 	defer tx.Commit()
-	root, err := n.get(tx, rootId)
+	root, err := n.get(ctx, tx, rootId)
 	if err != nil {
 		tx.Rollback()
 		return domain.NamespaceTree{}, err
 	}
 	rootNode := &domain.NamespaceTreeNode{Namespace: &root}
-	err = n.populateTree(tx, rootNode)
+	err = n.populateTree(ctx, tx, rootNode)
 	if err != nil {
 		tx.Rollback()
 		return domain.NamespaceTree{}, err
@@ -105,7 +120,11 @@ func (n *namespaceNeo4jStore) GetHierarchy(rootId string) (domain.NamespaceTree,
 	return domain.NamespaceTree{Root: *rootNode}, nil
 }
 
-func (n *namespaceNeo4jStore) Remove(id string) error {
+func (n *namespaceNeo4jStore) Remove(ctx context.Context, id string) error {
+	tracer := otel.Tracer("meridian.NamespaceNeo4jStore")
+	ctx, span := tracer.Start(ctx, "Remove")
+	defer span.End()
+
 	session := startSession(n.driver, n.dbName)
 	defer endSession(session)
 	tx, err := session.BeginTransaction()
@@ -123,7 +142,7 @@ func (n *namespaceNeo4jStore) Remove(id string) error {
 	return nil
 }
 
-func (n *namespaceNeo4jStore) get(tx neo4j.Transaction, id string) (domain.Namespace, error) {
+func (n *namespaceNeo4jStore) get(ctx context.Context, tx neo4j.Transaction, id string) (domain.Namespace, error) {
 	res, err := tx.Run(getNamespaceCypher, map[string]any{
 		"id": id,
 	})
@@ -138,7 +157,7 @@ func (n *namespaceNeo4jStore) get(tx neo4j.Transaction, id string) (domain.Names
 	if len(namespaces) == 0 {
 		return domain.Namespace{}, fmt.Errorf("cannot find namespace %s", id)
 	}
-	available, err := n.quotas.GetAvailableResources(tx, namespaces[0].GetId())
+	available, err := n.quotas.GetAvailableResources(ctx, tx, namespaces[0].GetId())
 	if err != nil {
 		return domain.Namespace{}, err
 	}
@@ -149,7 +168,7 @@ func (n *namespaceNeo4jStore) get(tx neo4j.Transaction, id string) (domain.Names
 	return namespaces[0], nil
 }
 
-func (n *namespaceNeo4jStore) getChildren(tx neo4j.Transaction, namespace domain.Namespace) ([]domain.Namespace, error) {
+func (n *namespaceNeo4jStore) getChildren(ctx context.Context, tx neo4j.Transaction, namespace domain.Namespace) ([]domain.Namespace, error) {
 	res, err := tx.Run(getChildNamespacesCypher, map[string]any{
 		"id": namespace.GetId(),
 	})
@@ -161,7 +180,7 @@ func (n *namespaceNeo4jStore) getChildren(tx neo4j.Transaction, namespace domain
 		return nil, err
 	}
 	for _, namespace := range namespaces {
-		available, err := n.quotas.GetAvailableResources(tx, namespace.GetId())
+		available, err := n.quotas.GetAvailableResources(ctx, tx, namespace.GetId())
 		if err != nil {
 			return nil, err
 		}
@@ -173,13 +192,13 @@ func (n *namespaceNeo4jStore) getChildren(tx neo4j.Transaction, namespace domain
 	return namespaces, nil
 }
 
-func (n *namespaceNeo4jStore) populateTree(tx neo4j.Transaction, node *domain.NamespaceTreeNode) error {
-	err := n.populateTreeNode(tx, node)
+func (n *namespaceNeo4jStore) populateTree(ctx context.Context, tx neo4j.Transaction, node *domain.NamespaceTreeNode) error {
+	err := n.populateTreeNode(ctx, tx, node)
 	if err != nil {
 		return err
 	}
 	for _, child := range node.Children {
-		err = n.populateTree(tx, child)
+		err = n.populateTree(ctx, tx, child)
 		if err != nil {
 			return err
 		}
@@ -187,13 +206,13 @@ func (n *namespaceNeo4jStore) populateTree(tx neo4j.Transaction, node *domain.Na
 	return nil
 }
 
-func (n *namespaceNeo4jStore) populateTreeNode(tx neo4j.Transaction, node *domain.NamespaceTreeNode) error {
-	apps, err := n.apps.FindChildren(*node.Namespace)
+func (n *namespaceNeo4jStore) populateTreeNode(ctx context.Context, tx neo4j.Transaction, node *domain.NamespaceTreeNode) error {
+	apps, err := n.apps.FindChildren(ctx, *node.Namespace)
 	if err != nil {
 		return err
 	}
 	node.Apps = apps
-	children, err := n.getChildren(tx, *node.Namespace)
+	children, err := n.getChildren(ctx, tx, *node.Namespace)
 	if err != nil {
 		return err
 	}

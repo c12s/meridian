@@ -56,14 +56,14 @@ func (m MeridianGrpcHandler) AddNamespace(ctx context.Context, req *api.AddNames
 		return nil, status.Errorf(codes.PermissionDenied, err.Error())
 	}
 
-	namespace, err := m.namespaces.Get(domain.MakeNamespaceId(req.OrgId, req.Name))
+	namespace, err := m.namespaces.Get(ctx, domain.MakeNamespaceId(req.OrgId, req.Name))
 	if err == nil {
 		err = status.Error(codes.AlreadyExists, "namespace already exists")
 		return nil, err
 	}
 	var parent *domain.Namespace
 	if req.ParentName != "" {
-		p, err := m.namespaces.Get(domain.MakeNamespaceId(req.OrgId, req.ParentName))
+		p, err := m.namespaces.Get(ctx, domain.MakeNamespaceId(req.OrgId, req.ParentName))
 		if err != nil {
 			log.Println(err)
 			err = status.Error(codes.NotFound, "parent namespace not found")
@@ -87,7 +87,7 @@ func (m MeridianGrpcHandler) AddNamespace(ctx context.Context, req *api.AddNames
 	if err != nil {
 		return nil, err
 	}
-	err = m.namespaces.Add(namespace, parent)
+	err = m.namespaces.Add(ctx, namespace, parent)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())
@@ -126,12 +126,12 @@ func (m MeridianGrpcHandler) RemoveNamespace(ctx context.Context, req *api.Remov
 	if err != nil {
 		return nil, status.Errorf(codes.PermissionDenied, err.Error())
 	}
-	tree, err := m.namespaces.GetHierarchy(nsId)
+	tree, err := m.namespaces.GetHierarchy(ctx, nsId)
 	if err == nil && (len(tree.Root.Children) > 0 || len(tree.Root.Apps) > 0) {
 		err = status.Error(codes.InvalidArgument, "namespace must not have applications or child namespaces")
 		return nil, err
 	}
-	err = m.namespaces.Remove(domain.MakeNamespaceId(req.OrgId, req.Name))
+	err = m.namespaces.Remove(ctx, domain.MakeNamespaceId(req.OrgId, req.Name))
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())
@@ -153,7 +153,7 @@ func (m MeridianGrpcHandler) AddApp(ctx context.Context, req *api.AddAppReq) (*a
 		return nil, status.Errorf(codes.PermissionDenied, err.Error())
 	}
 
-	namespace, err := m.namespaces.Get(nsId)
+	namespace, err := m.namespaces.Get(ctx, nsId)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.NotFound, "namespace not found")
@@ -175,7 +175,7 @@ func (m MeridianGrpcHandler) AddApp(ctx context.Context, req *api.AddAppReq) (*a
 	if err != nil {
 		return nil, err
 	}
-	err = m.apps.Add(app)
+	err = m.apps.Add(ctx, app)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())
@@ -244,7 +244,7 @@ func (m MeridianGrpcHandler) RemoveApp(ctx context.Context, req *api.RemoveAppRe
 		return nil, status.Errorf(codes.PermissionDenied, err.Error())
 	}
 
-	err = m.apps.Remove(appId)
+	err = m.apps.Remove(ctx, appId)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())
@@ -255,7 +255,7 @@ func (m MeridianGrpcHandler) RemoveApp(ctx context.Context, req *api.RemoveAppRe
 
 func (m MeridianGrpcHandler) GetNamespace(ctx context.Context, req *api.GetNamespaceReq) (*api.GetNamespaceResp, error) {
 	nsId := domain.MakeNamespaceId(req.OrgId, req.Name)
-	namespace, err := m.namespaces.Get(nsId)
+	namespace, err := m.namespaces.Get(ctx, nsId)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.NotFound, "namespace not found")
@@ -285,7 +285,7 @@ func (m MeridianGrpcHandler) GetNamespaceHierarchy(ctx context.Context, req *api
 		return nil, status.Errorf(codes.PermissionDenied, "the namespace is not associated with user organization")
 	}
 
-	tree, err := m.namespaces.GetHierarchy(nsId)
+	tree, err := m.namespaces.GetHierarchy(ctx, nsId)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.NotFound, "namespace hierarchy not found")
@@ -302,7 +302,7 @@ func (m MeridianGrpcHandler) SetNamespaceResources(ctx context.Context, req *api
 		return nil, status.Errorf(codes.PermissionDenied, err.Error())
 	}
 
-	err = m.resources.SetResourceQuotas(nsId, domain.ResourceQuotas(req.Quotas), nil)
+	err = m.resources.SetResourceQuotas(ctx, nsId, domain.ResourceQuotas(req.Quotas), nil)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())
@@ -327,7 +327,7 @@ func (m MeridianGrpcHandler) SetAppResources(ctx context.Context, req *api.SetAp
 		return nil, status.Errorf(codes.PermissionDenied, err.Error())
 	}
 
-	err = m.resources.SetResourceQuotas(appId, domain.ResourceQuotas(req.Quotas), nil)
+	err = m.resources.SetResourceQuotas(ctx, appId, domain.ResourceQuotas(req.Quotas), nil)
 	if err != nil {
 		log.Println(err)
 		err = status.Error(codes.Internal, err.Error())

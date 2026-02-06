@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -81,7 +82,7 @@ func (a *App) MarshalJSON() ([]byte, error) {
 }
 
 type AppStore interface {
-	Add(app App) error
-	FindChildren(namespace Namespace) ([]App, error)
-	Remove(id string) error
+	Add(ctx context.Context, app App) error
+	FindChildren(ctx context.Context, namespace Namespace) ([]App, error)
+	Remove(ctx context.Context, id string) error
 }
