@@ -105,7 +105,7 @@ func (m MeridianGrpcHandler) AddNamespace(ctx context.Context, req *api.AddNames
 			Kind: "namespace",
 		}
 	}
-	err2 := m.administrator.SendRequest(&oortapi.CreateInheritanceRelReq{
+	err2 := m.administrator.SendRequest(ctx, &oortapi.CreateInheritanceRelReq{
 		From: parentRes,
 		To: &oortapi.Resource{
 			Id:   namespace.GetId(),
@@ -213,7 +213,7 @@ func (m MeridianGrpcHandler) AddApp(ctx context.Context, req *api.AddAppReq) (*a
 		}
 	}
 
-	err2 := m.administrator.SendRequest(&oortapi.CreateInheritanceRelReq{
+	err2 := m.administrator.SendRequest(ctx, &oortapi.CreateInheritanceRelReq{
 		From: &oortapi.Resource{
 			Id:   nsId,
 			Kind: "namespace",
