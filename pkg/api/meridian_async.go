@@ -1,12 +1,14 @@
 package api
 
 import (
+	context "context"
 	"fmt"
 	"log"
 
 	"github.com/c12s/magnetar/pkg/messaging"
 	"github.com/c12s/magnetar/pkg/messaging/nats"
 	natsgo "github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -35,15 +37,21 @@ func NewMeridianAsyncClient(address, nodeId string) (*MeridianAsyncClient, error
 }
 
 func (c *MeridianAsyncClient) ReceiveConfig(handler ApplyAppConfigHandler) error {
-	return c.subscriber.Subscribe(func(msg []byte, replySubject string) {
+	return c.subscriber.Subscribe(func(ctx context.Context, msg []byte, replySubject string) {
+		tracer := otel.Tracer("meridian.async")
+		ctx, span := tracer.Start(ctx, "ReceiveConfig")
+		defer span.End()
+
 		cmd := &ApplyAppConfigCommand{}
 		err := proto.Unmarshal(msg, cmd)
 		if err != nil {
+			span.RecordError(err)
 			log.Println(err)
 			return
 		}
 		err = handler(cmd.OrgId, cmd.NamespaceName, cmd.AppName, cmd.SeccompProfile, cmd.Strategy, cmd.Quotas)
 		if err != nil {
+			span.RecordError(err)
 			log.Println(err)
 		}
 	})
