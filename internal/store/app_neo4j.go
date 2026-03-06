@@ -1,11 +1,13 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	"github.com/c12s/meridian/internal/domain"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
+	"go.opentelemetry.io/otel"
 )
 
 type appNeo4jStore struct {
@@ -25,7 +27,11 @@ func NewAppNeo4jStore(driver neo4j.Driver, dbName string, quotas domain.Resource
 	}
 }
 
-func (a *appNeo4jStore) Add(app domain.App) error {
+func (a *appNeo4jStore) Add(ctx context.Context, app domain.App) error {
+	tracer := otel.Tracer("meridian.AppNeo4jStore")
+	ctx, span := tracer.Start(ctx, "Add")
+	defer span.End()
+
 	session := startSession(a.driver, a.dbName)
 	defer endSession(session)
 	tx, err := session.BeginTransaction()
@@ -44,7 +50,7 @@ func (a *appNeo4jStore) Add(app domain.App) error {
 		return err
 	}
 
-	err = a.quotas.SetResourceQuotas(app.GetId(), app.GetResourceQuotas(), tx)
+	err = a.quotas.SetResourceQuotas(ctx, app.GetId(), app.GetResourceQuotas(), tx)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -53,7 +59,11 @@ func (a *appNeo4jStore) Add(app domain.App) error {
 	return nil
 }
 
-func (a *appNeo4jStore) FindChildren(namespace domain.Namespace) ([]domain.App, error) {
+func (a *appNeo4jStore) FindChildren(ctx context.Context, namespace domain.Namespace) ([]domain.App, error) {
+	tracer := otel.Tracer("meridian.AppNeo4jStore")
+	ctx, span := tracer.Start(ctx, "FindChildren")
+	defer span.End()
+
 	session := startSession(a.driver, a.dbName)
 	defer endSession(session)
 	tx, err := session.BeginTransaction()
@@ -71,7 +81,11 @@ func (a *appNeo4jStore) FindChildren(namespace domain.Namespace) ([]domain.App, 
 	return a.readApps(res, namespace)
 }
 
-func (a *appNeo4jStore) Remove(id string) error {
+func (a *appNeo4jStore) Remove(ctx context.Context, id string) error {
+	tracer := otel.Tracer("meridian.AppNeo4jStore")
+	ctx, span := tracer.Start(ctx, "Remove")
+	defer span.End()
+
 	session := startSession(a.driver, a.dbName)
 	defer endSession(session)
 	tx, err := session.BeginTransaction()

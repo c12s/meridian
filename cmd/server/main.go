@@ -17,12 +17,20 @@ import (
 	oortapi "github.com/c12s/oort/pkg/api"
 	pulsar_api "github.com/c12s/pulsar/model/protobuf"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 )
 
 func main() {
+
+	shutdownTracing := initTracing(
+		"meridian",
+		os.Getenv("JAEGER_HOST")+":"+os.Getenv("JAEGER_GRPC_PORT"),
+	)
+	defer shutdownTracing()
+
 	neo4jAddress := os.Getenv("NEO4J_ADDRESS")
 	driver, err := neo4j.NewDriver(fmt.Sprintf("bolt://%s", neo4jAddress), neo4j.NoAuth())
 	if err != nil {
@@ -59,7 +67,10 @@ func main() {
 	meridian := handlers.NewMeridianGrpcHandler(namespaces, apps, pulsar, quotas, administrator, gravity, magnetar, authorizer)
 
 	//s := grpc.NewServer()
-	s := grpc.NewServer(grpc.UnaryInterceptor(handlers.GetAuthInterceptor()))
+	s := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.UnaryInterceptor(handlers.GetAuthInterceptor()),
+	)
 	api.RegisterMeridianServer(s, meridian)
 	reflection.Register(s)
 
