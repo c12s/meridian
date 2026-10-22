@@ -508,6 +508,141 @@ func selectRandmNodes(nodes []*magnetarapi.NodeStringified, percentage int32) []
 	return selectedNodes
 }
 
+func (m MeridianGrpcHandler) BorrowResources(ctx context.Context, req *api.BorrowResourcesReq) (*api.BorrowResourcesResp, error) {
+	// borrow resources from app1 to app2
+	// app1 must release all allocated resources.
+	app1Quotas, err := m.resources.GetQuotas(nil, req.App1Id)
+	if err != nil {
+		return nil, err
+	}
+	app1Quotas[domain.SupportedResourceQuotas[2]] = 0
+	err = m.resources.SetResourceQuotas(req.App1Id, app1Quotas, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resourceQuotas, err := m.resources.GetAvailableResources(nil, req.App2Id)
+	if err != nil {
+		return nil, err
+	}
+	diskApp2, ok := resourceQuotas[domain.SupportedResourceQuotas[2]]
+	if !ok {
+		err = status.Error(codes.InvalidArgument, "no disk resources available for app2")
+		return nil, err
+	}
+
+	if diskApp2 >= req.DiskResources {
+		//do nothing because app2 already has enough resources
+		return &api.BorrowResourcesResp{Reply: "Application 2 already has enough disk resources", Done: true}, nil
+	}
+
+	ns2ResourceQuotas, err := m.resources.GetAvailableResources(nil, req.Namespace2Id)
+
+	if err != nil {
+		return nil, err
+	}
+
+	ns2Disk, ok := ns2ResourceQuotas[domain.SupportedResourceQuotas[2]]
+	if !ok {
+		err = status.Error(codes.InvalidArgument, "no disk resources available for namespace 2")
+		return nil, err
+	}
+
+	if req.Namespace1Id == req.Namespace2Id {
+		//apps are in the same namespace
+		if ns2Disk >= req.DiskResources {
+			newQuotas, err := m.resources.GetQuotas(nil, req.App2Id)
+			if err != nil {
+				return nil, err
+			}
+			newQuotas[domain.SupportedResourceQuotas[2]] += req.DiskResources
+			err = m.resources.SetResourceQuotas(req.App2Id, newQuotas, nil)
+			if err != nil {
+				return nil, err
+			}
+			return &api.BorrowResourcesResp{Reply: "Merge - apps are in the same namespace", Done: true}, nil
+		} else {
+			//todo - return error?
+			fmt.Println("error app1 did not return resources")
+			return &api.BorrowResourcesResp{Reply: "there are not enough resources in a namespace", Done: false}, nil
+		}
+	}
+	ns1Parent, err := m.namespaces.GetParentNamespace(req.Namespace1Id)
+	if err != nil {
+		return nil, err
+	}
+
+	ns2Parent, err := m.namespaces.GetParentNamespace(req.Namespace2Id)
+	if err != nil {
+		return nil, err
+	}
+
+	if ns1Parent.GetId() == ns2Parent.GetId() {
+		// namespaces have the same parent
+		if ns2Disk >= req.DiskResources {
+			newQuotas, err := m.resources.GetQuotas(nil, req.App2Id)
+			if err != nil {
+				return nil, err
+			}
+			newQuotas[domain.SupportedResourceQuotas[2]] = newQuotas[domain.SupportedResourceQuotas[2]] + req.DiskResources + diskApp2
+			err = m.resources.SetResourceQuotas(req.App2Id, newQuotas, nil)
+			if err != nil {
+				return nil, err
+			}
+			return &api.BorrowResourcesResp{Reply: "Namespaces have the same parent", Done: true}, nil
+		}
+
+		ns1ResourceQuotas, err := m.resources.GetAvailableResources(nil, req.Namespace1Id)
+		if err != nil {
+			return nil, err
+		}
+
+		ns1Disk, ok := ns1ResourceQuotas[domain.SupportedResourceQuotas[2]]
+		if !ok {
+			err = status.Error(codes.InvalidArgument, "no disk resources available for namespace 1")
+			return nil, err
+		}
+
+		if ns1Disk < req.DiskResources {
+			// todo: error
+			return &api.BorrowResourcesResp{Reply: "app1 did not return resources", Done: false}, nil
+		}
+
+		ns1Quotas, err := m.resources.GetQuotas(nil, req.Namespace1Id)
+		if err != nil {
+			return nil, err
+		}
+		ns1Quotas[domain.SupportedResourceQuotas[2]] -= req.DiskResources
+		err = m.resources.SetResourceQuotas(req.Namespace1Id, ns1Quotas, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		ns2Quotas, err := m.resources.GetQuotas(nil, req.Namespace2Id)
+		if err != nil {
+			return nil, err
+		}
+		ns2Quotas[domain.SupportedResourceQuotas[2]] += req.DiskResources
+		err = m.resources.SetResourceQuotas(req.Namespace2Id, ns2Quotas, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		app2Quotas, err := m.resources.GetQuotas(nil, req.App2Id)
+		if err != nil {
+			return nil, err
+		}
+		app2Quotas[domain.SupportedResourceQuotas[2]] += req.DiskResources
+		err = m.resources.SetResourceQuotas(req.App2Id, app2Quotas, nil)
+		if err != nil {
+			return nil, err
+		}
+		return &api.BorrowResourcesResp{Reply: "Namespaces have the same parent", Done: true}, nil
+	}
+	//todo - return error?
+	return &api.BorrowResourcesResp{Reply: "Unable to borrow resources", Done: false}, nil
+}
+
 func setOutgoingContext(ctx context.Context) context.Context {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {

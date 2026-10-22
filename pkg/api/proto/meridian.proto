@@ -15,6 +15,7 @@ service Meridian {
   rpc GetNamespaceHierarchy(GetNamespaceHierarchyReq) returns (GetNamespaceHierarchyResp) {}
   rpc SetNamespaceResources(SetNamespaceResourcesReq) returns (SetNamespaceResourcesResp) {}
   rpc SetAppResources(SetAppResourcesReq) returns (SetAppResourcesResp) {}
+  rpc BorrowResources (BorrowResourcesReq) returns (BorrowResourcesResp) {}
 }
 
 message AddNamespaceReq {
@@ -108,3 +109,16 @@ message SetAppResourcesReq {
 }
 
 message SetAppResourcesResp {}
+
+message BorrowResourcesReq {
+    string app1Id = 1;
+    string app2Id = 2;
+    string namespace1Id = 3;
+    string namespace2Id = 4;
+    double diskResources = 5;
+}
+
+message BorrowResourcesResp {
+    string reply = 1;
+    bool done = 2;
+}
