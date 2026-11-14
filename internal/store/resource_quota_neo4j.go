@@ -34,7 +34,7 @@ func (n *resourceQuotaNeo4jStore) SetResourceQuotas(entityId string, quotas doma
 		tx = newTx
 	}
 
-	total, err := n.getQuotas(tx, entityId)
+	total, err := n.GetQuotas(tx, entityId)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -77,7 +77,16 @@ func (n *resourceQuotaNeo4jStore) SetResourceQuotas(entityId string, quotas doma
 	return nil
 }
 
-func (n *resourceQuotaNeo4jStore) getQuotas(tx neo4j.Transaction, id string) (domain.ResourceQuotas, error) {
+func (n *resourceQuotaNeo4jStore) GetQuotas(tx neo4j.Transaction, id string) (domain.ResourceQuotas, error) {
+	if tx == nil {
+		session := startSession(n.driver, n.dbName)
+		defer endSession(session)
+		newTx, err := session.BeginTransaction()
+		if err != nil {
+			return nil, err
+		}
+		tx = newTx
+	}
 	res, err := tx.Run(getEntityCypher, map[string]any{
 		"id": id,
 	})

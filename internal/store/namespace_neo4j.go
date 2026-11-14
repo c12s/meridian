@@ -279,6 +279,40 @@ func (n *namespaceNeo4jStore) readNamespaces(res neo4j.Result, id string) ([]dom
 	return namespaces, nil
 }
 
+func (n *namespaceNeo4jStore) GetParentNamespace(namespaceId string) (*domain.Namespace, error) {
+	session := startSession(n.driver, n.dbName)
+	defer endSession(session)
+	tx, err := session.BeginTransaction()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Commit()
+
+	res, err := tx.Run(getParentNamespaceCypher, map[string]any{
+		"id": namespaceId,
+	})
+	if err != nil {
+		return nil, err
+	}
+	namespaces, err := n.readNamespaces(res, namespaceId)
+
+	if err != nil {
+		return nil, err
+	}
+	parentNamespace := namespaces[0]
+
+	available, err := n.quotas.GetAvailableResources(tx, parentNamespace.GetId())
+	if err != nil {
+		return nil, err
+	}
+	err = parentNamespace.SetAvailable(available)
+	if err != nil {
+		return nil, err
+	}
+
+	return &parentNamespace, nil
+}
+
 const addNamespaceCypher = `
 CREATE (n:Namespace:Entity{id: $id, org_id: $org_id, name: $name, profile_version: $profile_version, labels: $labels});
 `
@@ -303,4 +337,9 @@ const getChildNamespacesCypher = `
 MATCH (n:Namespace{id: $id})
 OPTIONAL MATCH (c:Namespace)<-[:CHILD]-(n)
 RETURN properties(c) AS properties;
+`
+const getParentNamespaceCypher = `
+MATCH (n:Namespace{id: $id})
+OPTIONAL MATCH (p:Namespace)-[:CHILD]->(n)
+RETURN properties(p) AS properties;
 `

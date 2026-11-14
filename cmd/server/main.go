@@ -45,7 +45,7 @@ func main() {
 	}
 	defer conn.Close()
 	gravity := gravityapi.NewAgentQueueClient(connGravity)
-	administrator, err := oortapi.NewAdministrationAsyncClient(os.Getenv("NATS_ADDRESS"))
+	administrator, err := oortapi.NewAdministrationAsyncClient(os.Getenv("NATS_ADDRESS")) //
 	if err != nil {
 		log.Fatalln(err)
 	}

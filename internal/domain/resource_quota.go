@@ -12,4 +12,5 @@ type ResourceQuotaStore interface {
 	// todo: remove tx from the interface
 	SetResourceQuotas(entityId string, quotas ResourceQuotas, tx neo4j.Transaction) error
 	GetAvailableResources(tx neo4j.Transaction, entityId string) (ResourceQuotas, error)
+	GetQuotas(tx neo4j.Transaction, id string) (ResourceQuotas, error)
 }
