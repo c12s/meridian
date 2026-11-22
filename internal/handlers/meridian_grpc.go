@@ -8,7 +8,6 @@ import (
 	"math"
 	"math/rand"
 	"strings"
-	"time"
 
 	gravityapi "github.com/c12s/gravity/pkg/api"
 	magnetarapi "github.com/c12s/magnetar/pkg/api"
@@ -491,21 +490,30 @@ func (m *MeridianGrpcHandler) placeByGossip(ctx context.Context, org string, per
 	return nodes, nil
 }
 
+// selectRandmNodes returns a uniformly random sample of up to percentage% of
+// the nodes. It never mutates the caller's slice, never panics on empty input,
+// and clamps percentage to [0, 100]. The caller's slice is left untouched.
 func selectRandmNodes(nodes []*magnetarapi.NodeStringified, percentage int32) []*magnetarapi.NodeStringified {
-	totalNodes := len(nodes)
-	numberOfNodesToSelect := int(math.Ceil(float64(totalNodes) * float64(percentage) / 100))
-
-	r := rand.New(rand.NewSource(time.Now().Unix()))
-
-	selectedNodes := make([]*magnetarapi.NodeStringified, 0)
-
-	for i := 0; i < numberOfNodesToSelect; i++ {
-		index := r.Intn(len(nodes))
-		selectedNodes = append(selectedNodes, nodes[index])
-		nodes = append(nodes[:index], nodes[index+1:]...)
+	if len(nodes) == 0 || percentage <= 0 {
+		return nil
 	}
-
-	return selectedNodes
+	if percentage > 100 {
+		percentage = 100
+	}
+	toSelect := int(math.Ceil(float64(len(nodes)) * float64(percentage) / 100))
+	if toSelect >= len(nodes) {
+		selected := make([]*magnetarapi.NodeStringified, len(nodes))
+		copy(selected, nodes)
+		return selected
+	}
+	// rand.Perm uses the global, concurrency-safe source, so two placements in
+	// the same second no longer return the same selection.
+	perm := rand.Perm(len(nodes))
+	selected := make([]*magnetarapi.NodeStringified, 0, toSelect)
+	for _, index := range perm[:toSelect] {
+		selected = append(selected, nodes[index])
+	}
+	return selected
 }
 
 func (m MeridianGrpcHandler) BorrowResources(ctx context.Context, req *api.BorrowResourcesReq) (*api.BorrowResourcesResp, error) {
